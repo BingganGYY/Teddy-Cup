@@ -1,0 +1,132 @@
+import pandas as pd
+import numpy as np
+from atrader import *
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+'''
+1、原始数据获取---沪深300和中证500因子以及标签数据
+2、数据预处理---缺失值均值填充
+3、有效因子获取---夏普比率计算---lasso---lasso系数结果表---系数为0删除
+4、冗余因子删除---相关性检验---相关性热力图/相关系数表
+'''
+
+# 1、原始数据获取
+# 获取hs300&zz500代码列表
+hs300_code = list(get_code_list('hs300')['code'])
+zz500_code = list(get_code_list('zz500')['code'])
+hs300_and_zz500_code = hs300_code + zz500_code
+
+factor_code = pd.read_csv("D:/factor_final_delete_by_zzp.csv")
+factor_code1 = factor_code['factor_code']
+
+#  读取因子的名称
+base_factor = list(factor_code1)
+# 因子数据获取
+factor_data = pd.DataFrame()
+for i in hs300_and_zz500_code:
+    Factor_code = get_factor_by_code(factor_list=base_factor, target=i,
+                                     begin_date='2017-01-01', end_date='2018-12-31')
+    Factor_code['code'] = i
+    factor_data = factor_data.append(Factor_code, ignore_index=True)
+print(factor_data)
+# 标签数据获取
+day_data = get_kdata(target_list=hs300_and_zz500_code, frequency='day', fre_num=1, begin_date='2017-01-01',
+                     end_date='2018-12-31', fq=1, fill_up=False, df=True, sort_by_date=False)
+
+
+# 数据读入
+all_month_data = pd.read_table("C:/Users/Amber/Desktop/taidibei/taidi_data/all_month_data.txt")
+# 2、数据预处理
+# 各因子缺失值均值填充
+factor_name = all_month_data.columns.tolist()[2:121]
+# print(len(factor_name))  # 119
+for i in factor_name:
+    factor_mean = all_month_data[i].mean()
+    all_month_data[i].fillna(factor_mean, inplace=True)
+
+# 3、有效因子获取
+# 夏普比率计算
+'''
+夏普比率计算通过每个因子在Auto-Trader回测手动得到，回测全部代码如下：
+
+
+from atrader import *
+import numpy as np
+import pandas as pd
+import datetime as dt
+
+def init(context):
+    set_backtest(initial_cash=10000000)  # 设置回测初始信息
+    #reg_kdata('day', 1)  # 注册K线数据
+    days = get_trading_days('SSE', '2016-01-01', '2018-09-30')
+    months = np.vectorize(lambda x: x.month)(days)
+    month_begin = days[pd.Series(months) != pd.Series(months).shift(1)]
+    context.month_begin = pd.Series(month_begin).dt.strftime('%Y-%m-%d').tolist()
+    #context.date = 20
+    context.ratio = 0.8
+    reg_factor(['MA10'])
+
+def on_data(context):
+    if dt.datetime.strftime(context.now, '%Y-%m-%d') not in context.month_begin:  # 调仓频率为月
+        return
+    order_close_all()
+    factors=get_reg_factor(reg_idx=context.reg_factor[0], target_indices=[x for x in range(50)], length=1, df=True)
+
+    df = factors.sort_values(["value"], ascending=True)
+    target_list = df["target_idx"].values
+    target_list = target_list[:5]
+    #print(target_list)
+    percent = context.ratio / len(target_list)
+    for symbol in target_list:
+        order_target_percent(account_idx=0, target_idx=int(symbol), target_percent=percent, side=1, order_type=2, price=0)
+
+if __name__ == '__main__':
+    begin = '2016-01-01'
+    end = '2018-09-30'
+    cons_date = dt.datetime.strptime(begin, '%Y-%m-%d') - dt.timedelta(days=1)
+    sz50 = get_code_list('sz50', cons_date)[['code', 'weight']]
+    targetlist = list(sz50['code'])
+    targetlist.append('sse.000016')
+    run_backtest(strategy_name='单因子测试',
+                 file_path='.',
+                 target_list=targetlist,
+                 frequency='day',
+                 fre_num=1,
+                 begin_date=begin,
+                 end_date=end,
+                 fq=1)
+'''
+
+# lasso
+from sklearn.linear_model import Lasso
+x = all_month_data.iloc[:, 2:121]
+y = all_month_data['month_return']
+model = Lasso()
+model.fit(x, y)
+result = model.coef_  # 各个特征的系数
+factor_name = np.array(factor_name)  # list---np.array
+data = pd.DataFrame(factor_name, result)
+
+# 4、冗余因子删除
+# 相关性检验
+lasso_result = pd.read_csv("C:/Users/Amber/Desktop/taidibei/taidi_data/lasso_result.csv")
+valid_factors = lasso_result[lasso_result['result'] != 0]['factor'].tolist()
+df = all_month_data[valid_factors]
+df_corr = df.corr()  # 得到df相关系数矩阵
+print(df_corr)
+df_corr.to_csv('C:/Users/Amber/Desktop/df_corr_20190422.csv')
+plt.subplots(figsize=(16, 16))  # 设置画面大小
+sns.heatmap(df_corr,  vmax=1, square=True, cmap="Blues")  # annot=True，显式热力图上的数值大小; square=True，将图变成一个正方形，默认是一个矩形;vmax是显示最大值
+# plt.savefig('./BluesStateRelation.png')
+plt.show()
+
+# 已相关因子的相关系数热力图
+factors = ['NetTangibleAssets', 'TangibleAToInteBearDebt', 'InterestCover', 'VSTD10', 'MONEYFLOW20',
+           'cm_ARC', 'AD', 'RSTR21', 'PE', 'ForwardPE', 'PEG5Y', 'RevenueTTM', 'ARTRate']
+df = all_month_data[factors]
+df_corr = df.corr()  # 得到df相关系数矩阵
+print(df_corr)
+plt.subplots(figsize=(16, 16))  # 设置画面大小
+sns.heatmap(df_corr,   vmax=1, square=True, cmap="Blues")  # annot=True，显式热力图上的数值大小; square=True，将图变成一个正方形，默认是一个矩形;
+plt.show()
