@@ -1,0 +1,211 @@
+#  补充因子合并
+#  1、因子表合并-得到：day_factors_data_new
+import pandas as pd
+day_factors_data = pd.read_csv("C:/Users/Amber/Desktop/taidibei_201903-04/taidi_data/day_factors_data.csv")  # 2016/1/4-2018/9/28  [487962 rows x 92 columns]
+day_factors_new417 = pd.read_csv("C:/Users/Amber/Desktop/taidibei_201903-04/taidi_data/day_factors_new417.csv")  # 2016/1/4-2018/9/28  [536800 rows x 35 columns]
+day_factors_data_new = pd.merge(day_factors_data, day_factors_new417, on='id', how='left')  # [487962 rows x 126 columns]
+# print(day_factors_data)
+# print(day_factors_new417)
+# print(day_factors_data_new)
+#  2、新因子表与原始标签表合并
+day_label_data = pd.read_csv("C:/Users/Amber/Desktop/taidibei_201903-04/taidi_data/day_label_data.csv")  #2016/1/4-2018/9/28 [487962 rows x 7 columns]
+# print(day_label_data)
+all_day_data_new = pd.merge(day_factors_data_new, day_label_data, on='id', how='left')  # [487962 rows x 132 columns]
+# print(all_day_data_new)
+# 做标签---收益率: return =(close-open)/open
+all_day_data_new['earnings'] = all_day_data_new['close'] - all_day_data_new['open']
+all_day_data_new['return'] = (all_day_data_new['close'] - all_day_data_new['open'])/all_day_data_new['open']
+print(all_day_data_new)  # [487962 rows x 134 columns]
+all_day_data_new.to_csv('C:/Users/Amber/Desktop/all_day_data_new.csv')
+#  3、月度数据处理
+all_day_data_new = pd.read_csv('C:/Users/Amber/Desktop/taidibei_201903-04/taidi_data/all_day_data_new.csv')
+# print(all_day_data_new)  # [487962 rows x 124 columns]
+
+all_month_data_new = all_day_data_new.groupby([all_day_data_new['month'], all_day_data_new['code']]).mean()
+all_month_data_new['month_earnings'] = all_day_data_new['earnings'].groupby([all_day_data_new['month'], all_day_data_new['code']]).sum()
+all_month_data_new['month_return'] = all_day_data_new['return'].groupby([all_day_data_new['month'], all_day_data_new['code']]).sum()
+all_month_data_new.to_csv('C:/Users/Amber/Desktop/all_month_data_new.csv')
+# print(all_month_data_new)  # [24487 rows x 123 columns]
+
+# 风格轮动---lightgbm
+import pandas as pd
+import lightgbm as lgb
+from sklearn.metrics import mean_squared_error
+style_rotation_data = pd.read_csv("C:/Users/Amber/Desktop/taidibei_201903-04/taidi_data/style_rotation-2019-4-18.csv")
+# print(style_rotation_data)  # [154 rows x 28 columns]
+
+# LightGBM
+train = style_rotation_data[style_rotation_data['date'] < '2018/1/1']
+test = style_rotation_data[style_rotation_data['date'] >= '2018/1/']
+x_test = test.iloc[:, 1:25]
+y_test = test['L_advantage'].values
+x = train.iloc[:, 1:25]
+y = train['L_advantage'].values
+
+# LightGBM回归
+lgb_model = lgb.LGBMRegressor()
+lgb_model = lgb_model.fit(x, y)
+# predict
+lgb_pred = lgb_model.predict(x_test, num_iteration=lgb_model.best_iteration_)
+print('The rmse of prediction is:', mean_squared_error(y_test, lgb_pred) ** 0.5)
+
+test['lgb_pred'] = lgb_pred
+print(type(lgb_pred))
+print(test)
+
+
+
+# 风格轮动---lightgbm
+import pandas as pd
+import lightgbm as lgb
+from sklearn.metrics import mean_squared_error
+from sklearn import metrics  # 混淆矩阵常用模块
+from sklearn.metrics import log_loss
+style_rotation_data = pd.read_csv("C:/Users/Amber/Desktop/taidibei_201903-04/taidi_data/style_rotation-2019-4-18.csv")
+# print(style_rotation_data)  # [154 rows x 28 columns]
+
+
+# LightGBM
+train = style_rotation_data[style_rotation_data['date'] < '2018/1/1']
+test = style_rotation_data[style_rotation_data['date'] >= '2018/1/']
+x_test = test.iloc[:, 1:25]
+y_test = test['label'].values
+x = train.iloc[:, 1:25]
+y = train['label'].values
+
+import catboost as cb
+cb_model = cb.CatBoostClassifier(iterations=10000,
+                                 depth=6,
+                                 learning_rate=0.03,
+                                 custom_loss='AUC',
+                                 eval_metric='AUC',
+                                 bagging_temperature=0.83,
+                                 od_type='Iter',
+                                 rsm=0.78,
+                                 od_wait=150,
+                                 metric_period=400,
+                                 l2_leaf_reg=5,
+                                 thread_count=20,
+                                 random_seed=967)
+cb_model = cb_model.fit(x, y)
+cb_pred = cb_model.predict_proba(x_test)[:, 1]
+cb_auc = metrics.roc_auc_score(y_test, cb_pred)
+print('AUC值：', cb_auc)
+print('logloss值：', log_loss(y_test, cb_pred))
+'''
+from sklearn.metrics import roc_curve, auc
+lgb_model = lgb.LGBMClassifier()
+lgb_model = lgb_model.fit(x, y)
+lgb_pred = lgb_model.predict_proba(x_test)[:, 1]
+lgb_auc = metrics.roc_auc_score(y_test, lgb_pred)
+print('AUC值：', lgb_auc)
+print('logloss值：', log_loss(y_test, lgb_pred))
+'''
+# 画AUC图
+import matplotlib.pyplot as plt
+from sklearn.metrics import roc_curve, auc  # 计算roc和auc
+fpr, tpr, threshold = roc_curve(y_test, cb_pred)  # 计算真正率和假正率
+roc_auc = auc(fpr, tpr)  # 计算auc的值
+plt.figure()
+lw = 2
+plt.figure(figsize=(10, 10))
+plt.plot(fpr, tpr, color='darkorange',
+         lw=lw, label='ROC curve (area = %0.2f)' % roc_auc)  # 假正率为横坐标，真正率为纵坐标做曲线
+plt.plot([0, 1], [0, 1], color='navy', lw=lw, linestyle='--')
+plt.xlim([0.0, 1.0])
+plt.ylim([0.0, 1.05])
+plt.xlabel('False Positive Rate')
+plt.ylabel('True Positive Rate')
+plt.title('Receiver operating characteristic example')
+plt.legend(loc="lower right")
+plt.show()
+
+'''
+import matplotlib.pylab as plt
+plt.figure(figsize=(12, 6))
+lgb.plot_importance(cb_model, max_num_features=10)
+plt.title("Featurertances")
+plt.show()
+'''
+'''
+# LightGBM回归
+lgb_model = lgb.LGBMRegressor()
+y_score = lgb_model.fit(x, y)
+# predict
+lgb_pred = lgb_model.predict(x_test, num_iteration=lgb_model.best_iteration_)
+print('The rmse of prediction is:', mean_squared_error(y_test, lgb_pred) ** 0.5)
+
+test['lgb_pred'] = lgb_pred
+print(type(lgb_pred))
+print(test)
+'''
+
+###  选股
+# 20190421
+# 1、利用lgb滚动预测跑模型---月份+code的dataframe
+import pandas as pd
+all_month_data = pd.read_csv("C:/Users/Amber/Desktop/taidibei_201903-04/taidi_data/all_month_data.csv.")
+# print(all_month_data)
+# print(all_month_data.columns.tolist())
+
+# 滚动预测---测试集、训练集最新划分
+month_list = sorted(list(set(all_month_data['month'].tolist())))  # 将serise---list---无序去重---排序
+# print(month_list)
+# print(len(month_list))
+
+num_train = 12
+num_test = 1
+num_times = (len(month_list)-num_train)//num_test
+# print(num_times)  # 21
+# print(month_list[0:12])
+
+all_stocks = pd.Series()
+for i in range(1, num_times + 1):
+    train_start = 1 + (i - 1)*num_test  # 训练集起点
+    train_end = num_train + (i - 1)*num_test  # 训练集终点
+    test_start = num_train + (i - 1)*num_test + 1  # 测试集起点
+    test_end = num_train + i*num_test  # 测试集终点
+    train = pd.DataFrame()
+    test = pd.DataFrame()
+    for j in range(train_start-1, train_end):
+        train_add = all_month_data[all_month_data['month'] == month_list[j]]
+        train = train.append(train_add)  # 构造训练集
+    for k in range(test_start-1, test_end):
+        test_add = all_month_data[all_month_data['month'] == month_list[k]]
+        test = test.append(test_add)  # 构造测试集
+    import lightgbm as lgb
+    from sklearn.metrics import mean_squared_error
+    x_test = test.iloc[:, 3:92]
+    y_test = test['month_return'].values
+    x = train.iloc[:, 3:92]
+    y = train['month_return'].values
+    # LightGBM回归
+    lgb_model = lgb.LGBMRegressor()
+    lgb_model = lgb_model.fit(x, y)
+    # predict
+    lgb_pred = lgb_model.predict(x_test, num_iteration=lgb_model.best_iteration_)
+    # print('The rmse of prediction is:', mean_squared_error(y_test, lgb_pred) ** 0.5)
+    # 按照预测return（收益）排序，选出前60只股票代码
+    test['lgb_pred'] = lgb_pred
+    # print(type(lgb_pred))
+    # print(test)
+    test.reset_index(drop=True)
+    # print(test.sort_values(by='lgb_pred', ascending=False))
+    stocks = (test.sort_values(by='lgb_pred', ascending=False)['month'] +
+              test.sort_values(by='lgb_pred', ascending=False)['code']).head(60)
+    # print(type(stocks))
+    all_stocks = all_stocks.append(stocks, ignore_index=True)
+print(all_stocks)
+
+all_stocks.to_csv('C:/Users/Amber/Desktop/all_stocks.csv')
+
+
+'L1_mean_pe', 'L3_indus_tbhb', 'L2_CPI_tbhb', 'L_M2tbhb','L_advantage'
+
+pool = ['sse.600000','sse600001','sse.600002','sse.600003','sse.600004','sse.600005']
+stocklist = ['sse.600000','sse.600002','sse.600005']
+indexlist=[]
+for i in stocklist:
+    print(pool.index(i))
+    indexlist.append(pool.index(i))
+print(indexlist)
