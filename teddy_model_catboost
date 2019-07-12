@@ -1,0 +1,76 @@
+###  选股
+# 1、利用cat滚动预测跑模型---月份+code的dataframe
+import pandas as pd
+all_month_data = pd.read_table("C:/Users/Amber/Desktop/taidibei_201903-04/taidi_data/all_month_data_new_20180424-neat1.txt")
+print(all_month_data)  #
+print(all_month_data.columns.tolist()[121:])
+
+# 滚动预测---测试集、训练集最新划分
+month_list = sorted(list(set(all_month_data['month'].tolist())))  # 将serise---list---无序去重---排序
+# print(month_list)
+# print(len(month_list))
+
+num_train = 12
+num_test = 1
+num_times = (len(month_list)-num_train)//num_test
+# print(num_times)  # 21
+# print(month_list[0:12])
+
+all_stocks = pd.Series()
+cat_rmse_list = []
+for i in range(1, num_times + 1):
+    train_start = 1 + (i - 1)*num_test  # 训练集起点
+    train_end = num_train + (i - 1)*num_test  # 训练集终点
+    test_start = num_train + (i - 1)*num_test + 1  # 测试集起点
+    test_end = num_train + i*num_test  # 测试集终点
+    train = pd.DataFrame()
+    test = pd.DataFrame()
+    for j in range(train_start-1, train_end):
+        train_add = all_month_data[all_month_data['month'] == month_list[j]]
+        train = train.append(train_add)  # 构造训练集
+    for k in range(test_start-1, test_end):
+        test_add = all_month_data[all_month_data['month'] == month_list[k]]
+        test = test.append(test_add)  # 构造测试集
+
+    import catboost as cb
+    from catboost import CatBoostRegressor
+    from sklearn.metrics import mean_squared_error
+
+    factors = ['NetTangibleAssets', 'TangibleAToInteBearDebt', 'InterestCover', 'VSTD10', 'MONEYFLOW20',
+               'cm_ARC', 'AD', 'RSTR21', 'PE', 'ForwardPE', 'PEG5Y', 'RevenueTTM', 'ARTRate',
+               'L1_mean_pe', 'L3_indus_tbhb', 'L2_CPI_tbhb', 'L_M2tbhb', 'L_confidence', 'L_house', 'L_rate',
+                'L_government', 'L_exc', 'last_3_diff_rev', 'L2_L_advantage', 'L1_L_advantage']
+
+    x_test = test[factors]
+    y_test = test['month_return'].values
+    x = train[factors]
+    y = train['month_return'].values
+
+    cat_model = cb.CatBoostRegressor()
+    cat_model = cat_model.fit(x, y)
+    # predict
+    cat_pred = cat_model.predict(x_test)
+    cat_rmse = mean_squared_error(y_test, cat_pred) ** 0.5
+    # 按照预测return（收益）排序，选出前60只股票代码
+    test['cat_pred'] = cat_pred
+    # print(type(cat_pred))
+    # print(test)
+    test.reset_index(drop=True)
+    # print(test.sort_values(by='lgb_pred', ascending=False))
+    stocks = (test.sort_values(by='cat_pred', ascending=False)['month'] +
+              test.sort_values(by='cat_pred', ascending=False)['code']).head(60)
+    # print(type(stocks))
+    all_stocks = all_stocks.append(stocks, ignore_index=True)
+    cat_rmse = float(cat_rmse)
+    cat_rmse_list.append(cat_rmse)
+print(all_stocks)
+print(cat_rmse_list)
+
+import matplotlib.pylab as plt
+plt.figure(figsize=(12, 6))
+lgb.plot_importance(cat_model)
+plt.title("Featurertances")
+plt.show()
+
+all_stocks.to_csv('C:/Users/Amber/Desktop/cat_all_stocks_regression.csv')
+
